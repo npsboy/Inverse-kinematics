@@ -8,12 +8,49 @@ pygame.init()
 #Init window
 window_width = 320*3
 window_height = 180*3
-sidebar_width = 240
+sidebar_width = 320
 canvas_width = window_width - sidebar_width
-window = pygame.display.set_mode((window_width, window_height))
+window = pygame.display.set_mode((window_width, window_height), pygame.RESIZABLE)
 pygame.display.set_caption("Inverse kinematics")
 font = pygame.font.SysFont("arial", 18)
 small_font = pygame.font.SysFont("arial", 15)
+
+def degrees_to_ticks(degrees: float, min_range: float, max_range: float) -> int:
+	return int(round(degrees * 10 + min_range))
+
+def ticks_to_degrees(ticks: int, min_range: float, max_range: float) -> float:
+    return (ticks - min_range) / 10.0
+
+joint_configs = [
+    {
+        "name": "shoulder_lift",
+        "id": 2,
+        "drive_mode": 0,
+        "homing_offset": 1022,
+        "range_min": 1457,
+        "range_max": 3815,
+    },
+    {
+        "name": "elbow_flex",
+        "id": 3,
+        "drive_mode": 0,
+        "homing_offset": 1288,
+        "range_min": 536,
+        "range_max": 2749,
+    },
+    {
+        "name": "wrist_flex",
+        "id": 4,
+        "drive_mode": 0,
+        "homing_offset": -1112,
+        "range_min": 313,
+        "range_max": 2632,
+    },
+]
+
+for joint in joint_configs:
+    joint["degree_min"] = 0.0
+    joint["degree_max"] = ticks_to_degrees(joint["range_max"], joint["range_min"], joint["range_max"])
 
 # Init variables
 chain = [50, 70, 60]
@@ -29,8 +66,26 @@ slider_min = 20
 slider_max = 180
 slider_track_x = canvas_width + 20
 slider_track_width = sidebar_width - 40
-slider_positions = [90, 170, 250]
+slider_positions = [110, 225, 340]
 dragging_slider = None
+
+def update_layout(size):
+    global window_width, window_height, sidebar_width, canvas_width, screen_middle_position
+    global slider_track_x, slider_track_width, slider_positions
+
+    window_width, window_height = size
+    sidebar_width = max(300, min(420, int(window_width * 0.34)))
+    if sidebar_width >= window_width - 200:
+        sidebar_width = max(260, window_width - 200)
+
+    canvas_width = window_width - sidebar_width
+    screen_middle_position = Vector2D(canvas_width / 2, window_height / 2)
+    slider_track_x = canvas_width + 24
+    slider_track_width = max(160, sidebar_width - 48)
+
+    base_y = 120
+    spacing = max(102, (window_height - 240) // 3)
+    slider_positions = [base_y + index * spacing for index in range(3)]
 
 def rebuild_chain_vectors(chain):
     return [Vector2D(length, 0) for length in chain]
@@ -50,7 +105,7 @@ def vector_angle_degrees(vector):
     if vector.length() == 0:
         return 0.0
 
-    return math.degrees(vector.get_angle())
+    return math.degrees(vector.get_angle()) % 360.0
 
 def update_chain_from_slider(index, mouse_x):
     global vectors, maximal_distance, end_effector
@@ -65,23 +120,32 @@ def draw_sidebar(window):
     pygame.draw.rect(window, (29, 32, 44), panel_rect)
     pygame.draw.line(window, (74, 81, 102), (canvas_width, 0), (canvas_width, window_height), 2)
 
-    title = font.render("Link lengths", True, (245, 247, 250))
+    title = font.render("Joint limits", True, (245, 247, 250))
     window.blit(title, (canvas_width + 18, 20))
 
     for index, y in enumerate(slider_positions):
-        label = small_font.render(f"Link {index + 1}", True, (207, 212, 223))
-        value_text = small_font.render(f"{chain[index]} px", True, (242, 242, 242))
-        angle_text = small_font.render(f"Angle: {vector_angle_degrees(vectors[index]):.1f} deg", True, (168, 174, 189))
-        window.blit(label, (canvas_width + 18, y - 34))
-        window.blit(value_text, (canvas_width + 18, y - 16))
-        window.blit(angle_text, (canvas_width + 18, y + 10))
+        joint = joint_configs[index]
+        current_angle = vector_angle_degrees(vectors[index])
+        current_ticks = degrees_to_ticks(current_angle, joint["range_min"], joint["range_max"])
+        label = small_font.render(joint["name"], True, (207, 212, 223))
+        range_text = small_font.render(
+            f"Range: {joint['degree_min']:.1f} - {joint['degree_max']:.1f} deg",
+            True,
+            (168, 174, 189),
+        )
+        angle_text = small_font.render(f"Angle: {current_angle:.1f} deg", True, (242, 242, 242))
+        tick_text = small_font.render(f"Ticks: {current_ticks}", True, (168, 174, 189))
+        window.blit(label, (canvas_width + 18, y - 62))
+        window.blit(range_text, (canvas_width + 18, y - 42))
+        window.blit(angle_text, (canvas_width + 18, y - 22))
+        window.blit(tick_text, (canvas_width + 18, y - 2))
 
-        track_rect = pygame.Rect(slider_track_x, y, slider_track_width, 6)
+        track_rect = pygame.Rect(slider_track_x, y + 26, slider_track_width, 6)
         pygame.draw.rect(window, (74, 81, 102), track_rect, border_radius=3)
 
         handle_x = int(slider_handle_x(chain[index]))
-        pygame.draw.circle(window, (15, 153, 113), (handle_x, y + 3), 10)
-        pygame.draw.circle(window, (245, 247, 250), (handle_x, y + 3), 10, 2)
+        pygame.draw.circle(window, (15, 153, 113), (handle_x, y + 29), 10)
+        pygame.draw.circle(window, (245, 247, 250), (handle_x, y + 29), 10, 2)
 
     help_text = [
         "Drag sliders to change",
@@ -91,7 +155,7 @@ def draw_sidebar(window):
     ]
     for line_index, text in enumerate(help_text):
         hint = small_font.render(text, True, (168, 174, 189))
-        window.blit(hint, (canvas_width + 18, window_height - 94 + line_index * 18))
+        window.blit(hint, (canvas_width + 18, window_height - 102 + line_index * 18))
 
 def check_triangle_validity(a, b, c): 
     return a+b>=c or a+c>=b or b+c>= a or math.isclose(a + b, c) or math.isclose(a + c, b) or math.isclose(b + c, a)
@@ -181,14 +245,19 @@ fps = 60
 clock = pygame.time.Clock()
 run = True
 
+update_layout(window.get_size())
+
 while run:
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             run = False
+        elif event.type == pygame.VIDEORESIZE:
+            window = pygame.display.set_mode(event.size, pygame.RESIZABLE)
+            update_layout(event.size)
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             mouse_x, mouse_y = event.pos
             for index, slider_y in enumerate(slider_positions):
-                slider_rect = pygame.Rect(slider_track_x, slider_y - 14, slider_track_width, 28)
+                slider_rect = pygame.Rect(slider_track_x, slider_y + 12, slider_track_width, 28)
                 if slider_rect.collidepoint(mouse_x, mouse_y):
                     dragging_slider = index
                     update_chain_from_slider(index, mouse_x)
