@@ -15,45 +15,22 @@ pygame.display.set_caption("Inverse kinematics")
 font = pygame.font.SysFont("arial", 18)
 small_font = pygame.font.SysFont("arial", 15)
 
-def degrees_to_ticks(degrees: float, min_range: float, max_range: float) -> int:
-	return int(round(degrees * 10 + min_range))
-
-def ticks_to_degrees(ticks: int, min_range: float, max_range: float) -> float:
-    return (ticks - min_range) / 10.0
+def clamp(value, minimum, maximum):
+    return max(minimum, min(maximum, value))
 
 joint_configs = [
     {
         "name": "shoulder_lift",
         "id": 2,
-        "drive_mode": 0,
-        "homing_offset": 1022,
-        "range_min": 1457,
-        "range_max": 3815,
     },
     {
         "name": "elbow_flex",
         "id": 3,
-        "drive_mode": 0,
-        "homing_offset": 1288,
-        "range_min": 536,
-        "range_max": 2749,
-    },
-    {
-        "name": "wrist_flex",
-        "id": 4,
-        "drive_mode": 0,
-        "homing_offset": -1112,
-        "range_min": 313,
-        "range_max": 2632,
-    },
+    }
 ]
 
-for joint in joint_configs:
-    joint["degree_min"] = 0.0
-    joint["degree_max"] = ticks_to_degrees(joint["range_max"], joint["range_min"], joint["range_max"])
-
 # Init variables
-chain = [50, 70, 60]
+chain = [100, 100]
 vectors = [Vector2D(length, 0) for length in chain]
 end_effector = Vector2D(0, 0)
 pole = Vector2D(0, 0)
@@ -66,8 +43,11 @@ slider_min = 20
 slider_max = 180
 slider_track_x = canvas_width + 20
 slider_track_width = sidebar_width - 40
-slider_positions = [110, 225, 340]
+slider_positions = [110, 225]
 dragging_slider = None
+prefer_positive_offset = True
+current_shoulder_angle_deg = 0.0
+current_elbow_angle_deg = 0.0
 
 def update_layout(size):
     global window_width, window_height, sidebar_width, canvas_width, screen_middle_position
@@ -83,9 +63,10 @@ def update_layout(size):
     slider_track_x = canvas_width + 24
     slider_track_width = max(160, sidebar_width - 48)
 
-    base_y = 120
-    spacing = max(102, (window_height - 240) // 3)
-    slider_positions = [base_y + index * spacing for index in range(3)]
+    base_y = 170
+    spacing = max(130, (window_height - 320) // 2) if (window_height - 320) > 0 else 130
+    slider_positions = [base_y + index * spacing for index in range(len(chain))]
+
 
 def rebuild_chain_vectors(chain):
     return [Vector2D(length, 0) for length in chain]
@@ -123,22 +104,37 @@ def draw_sidebar(window):
     title = font.render("Joint limits", True, (245, 247, 250))
     window.blit(title, (canvas_width + 18, 20))
 
+    toggle_rect = pygame.Rect(canvas_width + 18, 54, sidebar_width - 36, 34)
+    pygame.draw.rect(window, (42, 46, 61), toggle_rect, border_radius=10)
+    pygame.draw.rect(window, (74, 81, 102), toggle_rect, 2, border_radius=10)
+
+    toggle_label = small_font.render("Offset branch", True, (207, 212, 223))
+    toggle_value = small_font.render(
+        "+ angle" if prefer_positive_offset else "- angle",
+        True,
+        (15, 153, 113) if prefer_positive_offset else (255, 122, 80),
+    )
+    window.blit(toggle_label, (canvas_width + 30, 62))
+    window.blit(toggle_value, (canvas_width + sidebar_width - 102, 62))
+
+    toggle_knob_x = canvas_width + sidebar_width - 48 if prefer_positive_offset else canvas_width + sidebar_width - 84
+    pygame.draw.circle(window, (245, 247, 250), (toggle_knob_x, 71), 8)
+
+    # Show computed angles
+    shoulder_text = small_font.render(f"Shoulder: {current_shoulder_angle_deg:.1f} deg", True, (242, 242, 242))
+    elbow_text = small_font.render(f"Elbow: {current_elbow_angle_deg:.1f} deg", True, (242, 242, 242))
+    window.blit(shoulder_text, (canvas_width + 18, 96))
+    window.blit(elbow_text, (canvas_width + 18, 114))
+
     for index, y in enumerate(slider_positions):
         joint = joint_configs[index]
         current_angle = vector_angle_degrees(vectors[index])
-        current_ticks = degrees_to_ticks(current_angle, joint["range_min"], joint["range_max"])
+        
         label = small_font.render(joint["name"], True, (207, 212, 223))
-        range_text = small_font.render(
-            f"Range: {joint['degree_min']:.1f} - {joint['degree_max']:.1f} deg",
-            True,
-            (168, 174, 189),
-        )
         angle_text = small_font.render(f"Angle: {current_angle:.1f} deg", True, (242, 242, 242))
-        tick_text = small_font.render(f"Ticks: {current_ticks}", True, (168, 174, 189))
-        window.blit(label, (canvas_width + 18, y - 62))
-        window.blit(range_text, (canvas_width + 18, y - 42))
-        window.blit(angle_text, (canvas_width + 18, y - 22))
-        window.blit(tick_text, (canvas_width + 18, y - 2))
+        
+        window.blit(label, (canvas_width + 18, y - 36))
+        window.blit(angle_text, (canvas_width + 18, y - 16))
 
         track_rect = pygame.Rect(slider_track_x, y + 26, slider_track_width, 6)
         pygame.draw.rect(window, (74, 81, 102), track_rect, border_radius=3)
@@ -155,80 +151,74 @@ def draw_sidebar(window):
     ]
     for line_index, text in enumerate(help_text):
         hint = small_font.render(text, True, (168, 174, 189))
-        window.blit(hint, (canvas_width + 18, window_height - 102 + line_index * 18))
+        window.blit(hint, (canvas_width + 18, window_height - 110 + line_index * 18))
 
-def check_triangle_validity(a, b, c): 
-    return a+b>=c or a+c>=b or b+c>= a or math.isclose(a + b, c) or math.isclose(a + c, b) or math.isclose(b + c, a)
-
-def get_intersections(position1, radius1, position2, radius2):
-    # Calculate distance
-    distance_vector = position2-position1
-    distance = distance_vector.length()
-
-    if math.isclose(distance, 0):
-        fallback_offset = Vector2D(radius1, 0)
-        return position1 + fallback_offset, position1 - fallback_offset
-
-    # Distance = a + b
-    a = max((radius1**2 - radius2**2 + distance**2)/(2*distance), 0)
-
-    # Calculate height
-    height = math.sqrt(max(radius1**2 - a**2, 0))
-    height_vector = Vector2D(-height * distance_vector.sin(), height * distance_vector.cos())
-
-    # Calculate intersections' position
-    point = position1 + distance_vector.normalized()*a
-    intersection1 = point + height_vector
-    intersection2 = point - height_vector
-
-    '''position1_global = Vector2D(position1.x, -position1.y) + screen_middle_position
-    position2_global = Vector2D(position2.x, -position2.y) + screen_middle_position
-    pygame.draw.circle(window, (255, 255, 255), (int(position1_global.x), int(position1_global.y)), int(radius1), 1)
-    pygame.draw.circle(window, (255, 255, 255), (int(position2_global.x), int(position2_global.y)), int(radius2), 1)'''
-
-    return intersection1, intersection2
-
-def find_side(minimal_length, maximal_length, side1, side2):
-    for side in numpy.arange(maximal_length, minimal_length, -0.5):
-        # print(side, side1, side2, check_triangle_validity(side, side1, side2))
-        if check_triangle_validity(side, side1, side2):
-            return side
-    return 0
+check_triangle_validity = None
+get_intersections = None
+find_side = None
 
 def resolve_ik(chain, vectors, end_effector, maximal_distance, pole):
-    # Init variables
-    new_vectors = []
-    # Calculate current side
-    if end_effector.length() > maximal_distance:
-        end_effector = end_effector.normalized() * maximal_distance
-    current_side_vector = end_effector
+    a = chain[0]
+    b = chain[1]
 
-    for i in range(chain.__len__()-1, 0, -1):
-        current_side = current_side_vector.length()
-        # Find possible side
-        new_side = find_side(0, sum(chain[:i]), chain[i], current_side)
-        # Find intersection nearest to the pole
-        intersections = []
-        if i != 1:
-            intersections = get_intersections(current_side_vector, chain[i], Vector2D(0, 0), new_side)
+    x = end_effector.x
+    y = end_effector.y
+
+    c = math.sqrt(x**2 + y**2)
+
+    if c > a + b:
+        c = a + b
+        end_effector = end_effector.normalized() * c
+        x = end_effector.x
+        y = end_effector.y
+    elif c < abs(a - b):
+        c = abs(a - b)
+        if c > 0:
+            end_effector = end_effector.normalized() * c
+        x = end_effector.x
+        y = end_effector.y
+
+    if c == 0:
+        return [Vector2D(a, 0), Vector2D(b, 0)]
+
+    val1 = (c**2 + a**2 - b**2) / (2 * a * c)
+    val1 = max(-1.0, min(1.0, val1))
+
+    angle_offset = math.acos(val1)
+    base_angle = math.atan2(y, x)
+
+    theta1_a = base_angle + angle_offset
+    theta1_b = base_angle - angle_offset
+
+    elbow_a = Vector2D(a * math.cos(theta1_a), a * math.sin(theta1_a))
+    elbow_b = Vector2D(a * math.cos(theta1_b), a * math.sin(theta1_b))
+
+    if prefer_positive_offset:
+        shoulder_theta = theta1_a
+        elbow = elbow_a
+    else:
+        shoulder_theta = theta1_b
+        elbow = elbow_b
+
+    # Compute explicit elbow angle (theta2) using law of cosines
+    # theta2 = arccos((a^2 + b^2 - c^2) / (2ab))
+    try:
+        denom = 2.0 * a * b
+        if denom == 0:
+            theta2 = 0.0
         else:
-            intersections = get_intersections(current_side_vector, chain[i], Vector2D(0, 0), chain[0])
+            v = (a * a + b * b - c * c) / denom
+            v = max(-1.0, min(1.0, v))
+            theta2 = math.acos(v)
+    except Exception:
+        theta2 = 0.0
 
-        intersection = Vector2D(0, 0)
-        if intersections[0]-pole < intersections[1]-pole:
-            intersection = intersections[0]
-        else:
-            intersection = intersections[1]
-        # Change vector
-        new_vectors.insert(0, current_side_vector - intersection)
+    # Update global readable angles (degrees)
+    global current_shoulder_angle_deg, current_elbow_angle_deg
+    current_shoulder_angle_deg = math.degrees(shoulder_theta) if shoulder_theta is not None else 0.0
+    current_elbow_angle_deg = math.degrees(theta2)
 
-        # print(new_vectors.__len__())
-        current_side_vector = intersection
-        print(new_side)
-
-    new_vectors.insert(0, current_side_vector)
-
-    return new_vectors
+    return [elbow, end_effector - elbow]
 
 def draw_vectors_chain(window, position, chain, color, width=1, draw_circles=False, radius=1, circle_color=(255, 255, 255)):
         for vector in chain:
@@ -256,6 +246,12 @@ while run:
             update_layout(event.size)
         elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
             mouse_x, mouse_y = event.pos
+            toggle_rect = pygame.Rect(canvas_width + 18, 52, sidebar_width - 36, 42)
+            if toggle_rect.collidepoint(mouse_x, mouse_y):
+                prefer_positive_offset = not prefer_positive_offset
+                if end_effector.length() > 0:
+                    vectors = resolve_ik(chain, vectors, end_effector, maximal_distance, pole)
+                continue
             for index, slider_y in enumerate(slider_positions):
                 slider_rect = pygame.Rect(slider_track_x, slider_y + 12, slider_track_width, 28)
                 if slider_rect.collidepoint(mouse_x, mouse_y):
