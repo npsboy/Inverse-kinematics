@@ -83,34 +83,45 @@ def vector_angle_degrees(vector):
 
     return math.degrees(vector.get_angle()) % 360.0
 
-def calculate_angles(y, z, link_lengths, pole_y=0, pole_z=0):
+def calculate_angles(x, y, z, link_lengths, pole_y=0, pole_z=0):
     """
     Calculate inverse kinematics for an n-link robotic arm.
     
+    :param x: Target X coordinate for the end effector.
     :param y: Target Y coordinate for the end effector.
     :param z: Target Z coordinate for the end effector.
     :param link_lengths: List specifying the lengths of each link in the chain.
     :param pole_y: Optional Y coordinate for the pole (used to choose joint orientations).
     :param pole_z: Optional Z coordinate for the pole.
-    :return: List of joint angles in degrees.
+    :return: Dictionary containing the joint angles in degrees.
     """
     end_effector = Vector2D(y, z)
     pole = Vector2D(pole_y, pole_z)
     
     vectors = resolve_ik(link_lengths, end_effector, pole)
     
-    angles = [vector_angle_degrees(vec) for vec in vectors]
+    # Calculate the 3 other joints from the 2D IK computation
+    arm_angles = [vector_angle_degrees(vec) for vec in vectors]
     
-    return angles
+    # Calculate shoulder pan
+    shoulder_pan = math.degrees(math.atan2(x, y)) + 90
+    
+    return {
+        "shoulder_pan": shoulder_pan,
+        "shoulder_lift": arm_angles[0] if len(arm_angles) > 0 else 0,
+        "elbow_flex": arm_angles[1] if len(arm_angles) > 1 else 0,
+        "wrist_flex": arm_angles[2] if len(arm_angles) > 2 else 0,
+    }
 
 if __name__ == "__main__":
     # Example usage:
     # Links matching the default lengths in main.py
     links = [50, 70, 60]
+    target_x = 10
     target_y = 100
     target_z = 50
     
-    out_angles = calculate_angles(target_y, target_z, links)
-    print(f"Target: ({target_y}, {target_z})")
+    out_angles = calculate_angles(target_x, target_y, target_z, links)
+    print(f"Target: ({target_x}, {target_y}, {target_z})")
     print(f"Lengths: {links}")
     print(f"Calculated Angles (degrees): {out_angles}")
