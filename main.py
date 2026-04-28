@@ -3,25 +3,95 @@ import math
 import numpy
 from vector import Vector2D
 
+pygame.init()
+
 #Init window
 window_width = 320*3
 window_height = 180*3
+sidebar_width = 240
+canvas_width = window_width - sidebar_width
 window = pygame.display.set_mode((window_width, window_height))
 pygame.display.set_caption("Inverse kinematics")
+font = pygame.font.SysFont("arial", 18)
+small_font = pygame.font.SysFont("arial", 15)
 
 # Init variables
-chain = [50, 70, 60, 30, 20, 50, 60]
-vectors = []
+chain = [50, 70, 60]
+vectors = [Vector2D(length, 0) for length in chain]
 end_effector = Vector2D(0, 0)
 pole = Vector2D(0, 0)
 maximal_distance = sum(chain)
-# Fill array of vectors
-for i in range(0, chain.__len__()):
-    vectors.append(Vector2D(chain[i], 0))
 
-screen_middle_position = Vector2D(window_width/2, window_height/2)
+screen_middle_position = Vector2D(canvas_width/2, window_height/2)
 pole_global = Vector2D(0, 0)
 end_effector_global = Vector2D(0, 0)
+slider_min = 20
+slider_max = 180
+slider_track_x = canvas_width + 20
+slider_track_width = sidebar_width - 40
+slider_positions = [90, 170, 250]
+dragging_slider = None
+
+def rebuild_chain_vectors(chain):
+    return [Vector2D(length, 0) for length in chain]
+
+def clamp(value, minimum, maximum):
+    return max(minimum, min(maximum, value))
+
+def value_from_slider(mouse_x):
+    ratio = (mouse_x - slider_track_x) / slider_track_width
+    return int(round(slider_min + clamp(ratio, 0, 1) * (slider_max - slider_min)))
+
+def slider_handle_x(value):
+    ratio = (value - slider_min) / (slider_max - slider_min)
+    return slider_track_x + ratio * slider_track_width
+
+def vector_angle_degrees(vector):
+    if vector.length() == 0:
+        return 0.0
+
+    return math.degrees(vector.get_angle())
+
+def update_chain_from_slider(index, mouse_x):
+    global vectors, maximal_distance, end_effector
+    chain[index] = value_from_slider(mouse_x)
+    vectors = rebuild_chain_vectors(chain)
+    maximal_distance = sum(chain)
+    if end_effector.length() > 0:
+        vectors = resolve_ik(chain, vectors, end_effector, maximal_distance, pole)
+
+def draw_sidebar(window):
+    panel_rect = pygame.Rect(canvas_width, 0, sidebar_width, window_height)
+    pygame.draw.rect(window, (29, 32, 44), panel_rect)
+    pygame.draw.line(window, (74, 81, 102), (canvas_width, 0), (canvas_width, window_height), 2)
+
+    title = font.render("Link lengths", True, (245, 247, 250))
+    window.blit(title, (canvas_width + 18, 20))
+
+    for index, y in enumerate(slider_positions):
+        label = small_font.render(f"Link {index + 1}", True, (207, 212, 223))
+        value_text = small_font.render(f"{chain[index]} px", True, (242, 242, 242))
+        angle_text = small_font.render(f"Angle: {vector_angle_degrees(vectors[index]):.1f} deg", True, (168, 174, 189))
+        window.blit(label, (canvas_width + 18, y - 34))
+        window.blit(value_text, (canvas_width + 18, y - 16))
+        window.blit(angle_text, (canvas_width + 18, y + 10))
+
+        track_rect = pygame.Rect(slider_track_x, y, slider_track_width, 6)
+        pygame.draw.rect(window, (74, 81, 102), track_rect, border_radius=3)
+
+        handle_x = int(slider_handle_x(chain[index]))
+        pygame.draw.circle(window, (15, 153, 113), (handle_x, y + 3), 10)
+        pygame.draw.circle(window, (245, 247, 250), (handle_x, y + 3), 10, 2)
+
+    help_text = [
+        "Drag sliders to change",
+        "each segment length.",
+        "Left mouse: target",
+        "Right mouse: pole",
+    ]
+    for line_index, text in enumerate(help_text):
+        hint = small_font.render(text, True, (168, 174, 189))
+        window.blit(hint, (canvas_width + 18, window_height - 94 + line_index * 18))
 
 def check_triangle_validity(a, b, c): 
     return a+b>=c or a+c>=b or b+c>= a or math.isclose(a + b, c) or math.isclose(a + c, b) or math.isclose(b + c, a)
@@ -30,6 +100,10 @@ def get_intersections(position1, radius1, position2, radius2):
     # Calculate distance
     distance_vector = position2-position1
     distance = distance_vector.length()
+
+    if math.isclose(distance, 0):
+        fallback_offset = Vector2D(radius1, 0)
+        return position1 + fallback_offset, position1 - fallback_offset
 
     # Distance = a + b
     a = max((radius1**2 - radius2**2 + distance**2)/(2*distance), 0)
@@ -111,17 +185,31 @@ while run:
     for event in pygame.event.get():
         if event.type == pygame.QUIT:
             run = False
+        elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+            mouse_x, mouse_y = event.pos
+            for index, slider_y in enumerate(slider_positions):
+                slider_rect = pygame.Rect(slider_track_x, slider_y - 14, slider_track_width, 28)
+                if slider_rect.collidepoint(mouse_x, mouse_y):
+                    dragging_slider = index
+                    update_chain_from_slider(index, mouse_x)
+                    break
+        elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
+            dragging_slider = None
+        elif event.type == pygame.MOUSEMOTION and dragging_slider is not None:
+            update_chain_from_slider(dragging_slider, event.pos[0])
 
-    window.fill((226, 95, 91))
+    window.fill((56, 128, 235))
 
-    if pygame.mouse.get_pressed()[0]:
-        end_effector_global = Vector2D(pygame.mouse.get_pos()[0], pygame.mouse.get_pos()[1])
+    mouse_x, mouse_y = pygame.mouse.get_pos()
+
+    if pygame.mouse.get_pressed()[0] and mouse_x < canvas_width and dragging_slider is None:
+        end_effector_global = Vector2D(mouse_x, mouse_y)
         end_effector = end_effector_global - screen_middle_position
         end_effector.y *= -1
         vectors = resolve_ik(chain, vectors, end_effector, maximal_distance, pole)
         
-    if pygame.mouse.get_pressed()[2]:
-        pole_global = Vector2D(pygame.mouse.get_pos()[0], pygame.mouse.get_pos()[1])
+    if pygame.mouse.get_pressed()[2] and mouse_x < canvas_width:
+        pole_global = Vector2D(mouse_x, mouse_y)
         pole = pole_global - screen_middle_position
         pole.y *= -1
 
@@ -133,6 +221,7 @@ while run:
 
     draw_vectors_chain(window, screen_middle_position, vectors, (255, 255, 255), width=7, draw_circles=True, circle_color=(55, 59, 68), radius=5)
     # draw_vectors_chain(window, screen_middle_position, vectors, (255, 255, 255))
+    draw_sidebar(window)
 
     delta_time = clock.tick(fps)
 
