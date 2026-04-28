@@ -83,19 +83,19 @@ def vector_angle_degrees(vector):
 
     return math.degrees(vector.get_angle()) % 360.0
 
-def calculate_angles(x, y, link_lengths, pole_x=0, pole_y=0):
+def calculate_angles(y, z, link_lengths, pole_y=0, pole_z=0):
     """
     Calculate inverse kinematics for an n-link robotic arm.
     
-    :param x: Target X coordinate for the end effector.
     :param y: Target Y coordinate for the end effector.
+    :param z: Target Z coordinate for the end effector.
     :param link_lengths: List specifying the lengths of each link in the chain.
-    :param pole_x: Optional X coordinate for the pole (used to choose joint orientations).
-    :param pole_y: Optional Y coordinate for the pole.
+    :param pole_y: Optional Y coordinate for the pole (used to choose joint orientations).
+    :param pole_z: Optional Z coordinate for the pole.
     :return: List of joint angles in degrees.
     """
-    end_effector = Vector2D(x, y)
-    pole = Vector2D(pole_x, pole_y)
+    end_effector = Vector2D(y, z)
+    pole = Vector2D(pole_y, pole_z)
     
     vectors = resolve_ik(link_lengths, end_effector, pole)
     
@@ -107,10 +107,10 @@ if __name__ == "__main__":
     # Example usage:
     # Links matching the default lengths in main.py
     links = [50, 70, 60]
-    target_x = 100
-    target_y = 50
+    target_y = 100
+    target_z = 50
     
-    out_angles = calculate_angles(target_x, target_y, links)
-    print(f"Target: ({target_x}, {target_y})")
+    out_angles = calculate_angles(target_y, target_z, links)
+    print(f"Target: ({target_y}, {target_z})")
     print(f"Lengths: {links}")
     print(f"Calculated Angles (degrees): {out_angles}")

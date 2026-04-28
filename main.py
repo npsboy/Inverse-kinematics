@@ -232,11 +232,11 @@ def resolve_ik(chain, vectors, end_effector, maximal_distance, pole):
 
 def draw_vectors_chain(window, position, chain, color, width=1, draw_circles=False, radius=1, circle_color=(255, 255, 255)):
         for vector in chain:
-            new_vector = Vector2D(vector.x + position.x, -vector.y + position.y)
-            pygame.draw.line(window, color, (position.x, position.y), (new_vector.x, new_vector.y), width)  
+            new_vector = Vector2D(vector.y + position.y, -vector.z + position.z)
+            pygame.draw.line(window, color, (position.y, position.z), (new_vector.y, new_vector.z), width)  
             if draw_circles:
-                pygame.draw.circle(window, circle_color, (position.x, position.y), radius)
-                pygame.draw.circle(window, circle_color, (new_vector.x, new_vector.y), radius)
+                pygame.draw.circle(window, circle_color, (position.y, position.z), radius)
+                pygame.draw.circle(window, circle_color, (new_vector.y, new_vector.z), radius)
 
             position = new_vector
 
@@ -269,24 +269,24 @@ while run:
 
     window.fill((56, 128, 235))
 
-    mouse_x, mouse_y = pygame.mouse.get_pos()
+    mouse_y, mouse_z = pygame.mouse.get_pos()
 
-    if pygame.mouse.get_pressed()[0] and mouse_x < canvas_width and dragging_slider is None:
-        end_effector_global = Vector2D(mouse_x, mouse_y)
+    if pygame.mouse.get_pressed()[0] and mouse_y < canvas_width:
+        end_effector_global = Vector2D(mouse_y, mouse_z)
         end_effector = end_effector_global - screen_middle_position
-        end_effector.y *= -1
+        end_effector.z *= -1
         vectors = resolve_ik(chain, vectors, end_effector, maximal_distance, pole)
         
-    if pygame.mouse.get_pressed()[2] and mouse_x < canvas_width:
-        pole_global = Vector2D(mouse_x, mouse_y)
+    if pygame.mouse.get_pressed()[2] and mouse_y < canvas_width:
+        pole_global = Vector2D(mouse_y, mouse_z)
         pole = pole_global - screen_middle_position
-        pole.y *= -1
+        pole.z *= -1
 
     # draw_vectors_chain(window, screen_middle_position, [end_effector.normalized() * maximal_distance], (15, 153, 113), width=4)
 
     # Draw pole and end effector
-    pygame.draw.circle(window, (0, 242, 255), (int(pole_global.x), int(pole_global.y)), 5)
-    pygame.draw.circle(window, (15, 153, 113), (int(end_effector_global.x), int(end_effector_global.y)), 5)
+    pygame.draw.circle(window, (0, 242, 255), (int(pole_global.y), int(pole_global.z)), 5)
+    pygame.draw.circle(window, (15, 153, 113), (int(end_effector_global.y), int(end_effector_global.z)), 5)
 
     draw_vectors_chain(window, screen_middle_position, vectors, (255, 255, 255), width=7, draw_circles=True, circle_color=(55, 59, 68), radius=5)
     # draw_vectors_chain(window, screen_middle_position, vectors, (255, 255, 255))
