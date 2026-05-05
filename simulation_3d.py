@@ -84,6 +84,13 @@ def world_to_camera(point, yaw, pitch, distance):
     return (rotated[0], rotated[1] + distance, rotated[2])
 
 
+def camera_to_world(point, yaw, pitch, distance):
+    x, y, z = point
+    shifted = (x, y - distance, z)
+    rotated = rotate_x(shifted, pitch)
+    return rotate_z(rotated, yaw)
+
+
 def project(point, center, fov):
     x, y, z = point
     if y <= 1:
@@ -134,6 +141,34 @@ def draw_point_3d(surface, point, color, camera, center, fov, radius=6):
     position, scale = projected
     scaled_radius = max(2, int(radius * scale * 0.65))
     pygame.draw.circle(surface, color, position, scaled_radius)
+
+
+def screen_to_world(screen_pos, depth, camera, center, fov):
+    x = (screen_pos[0] - center[0]) * depth / fov
+    z = -(screen_pos[1] - center[1]) * depth / fov
+    return camera_to_world((x, depth, z), camera["yaw"], camera["pitch"], camera["distance"])
+
+
+def pick_drag_target(mouse_pos, target, pole, camera, center, fov, settings):
+    candidates = []
+    for label, point, radius in (
+        ("target", target, settings["target_radius"]),
+        ("pole", pole, settings["target_radius"] * 0.85),
+    ):
+        cam_point = world_to_camera(point, camera["yaw"], camera["pitch"], camera["distance"])
+        projected = project(cam_point, center, fov)
+        if projected is None:
+            continue
+        screen_pos, scale = projected
+        hit_radius = max(6, int(radius * scale * 0.85))
+        dist = math.hypot(mouse_pos[0] - screen_pos[0], mouse_pos[1] - screen_pos[1])
+        if dist <= hit_radius:
+            candidates.append((dist, label, cam_point[1], point))
+
+    if not candidates:
+        return None
+
+    return min(candidates, key=lambda item: item[0])
 
 
 def draw_grid(surface, size, spacing, camera, center, fov):
@@ -473,6 +508,10 @@ def main():
 
     dragging = False
     dragging_slider = None
+    dragging_target = False
+    dragging_pole = False
+    drag_depth = None
+    drag_offset = (0.0, 0.0, 0.0)
     last_mouse = (0, 0)
 
     while running:
@@ -493,17 +532,40 @@ def main():
                         target = clamp_target_to_reach(target, link_lengths)
                         break
                 else:
-                    dragging = True
-                    last_mouse = event.pos
+                    center = (window.get_width() // 2, window.get_height() // 2)
+                    settings = scene_settings(link_lengths)
+                    hit = pick_drag_target(event.pos, target, pole, camera, center, fov, settings)
+                    if hit is not None and hit[2] > 1.0:
+                        _, label, depth, point = hit
+                        drag_depth = depth
+                        drag_offset = vec_sub(point, screen_to_world(event.pos, depth, camera, center, fov))
+                        dragging_target = label == "target"
+                        dragging_pole = label == "pole"
+                        dragging = False
+                    else:
+                        dragging = True
+                        last_mouse = event.pos
             elif event.type == pygame.MOUSEBUTTONUP and event.button == 1:
                 dragging = False
                 dragging_slider = None
+                dragging_target = False
+                dragging_pole = False
             elif event.type == pygame.MOUSEMOTION:
                 if dragging_slider is not None:
                     panel_rect, tracks = slider_layout(window.get_size(), len(link_lengths))
                     track = tracks[dragging_slider]
                     link_lengths[dragging_slider] = slider_x_to_value(event.pos[0], track)
                     target = clamp_target_to_reach(target, link_lengths)
+                elif dragging_target or dragging_pole:
+                    if drag_depth is None:
+                        continue
+                    center = (window.get_width() // 2, window.get_height() // 2)
+                    new_point = screen_to_world(event.pos, drag_depth, camera, center, fov)
+                    new_point = vec_add(new_point, drag_offset)
+                    if dragging_target:
+                        target = clamp_target_to_reach([new_point[0], new_point[1], new_point[2]], link_lengths)
+                    else:
+                        pole = [new_point[0], new_point[1], new_point[2]]
                 elif dragging:
                     dx = event.pos[0] - last_mouse[0]
                     dy = event.pos[1] - last_mouse[1]
