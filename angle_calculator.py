@@ -95,7 +95,9 @@ def calculate_angles(x, y, z, link_lengths, pole_y=0, pole_z=0):
     :param pole_z: Optional Z coordinate for the pole.
     :return: Dictionary containing the joint angles in degrees.
     """
-    end_effector = Vector2D(y, z)
+    # The extension of the arm in the 3D plane is the hypotenuse of x and y
+    extension = math.hypot(x, y)
+    end_effector = Vector2D(extension, z)
     pole = Vector2D(pole_y, pole_z)
     
     vectors = resolve_ik(link_lengths, end_effector, pole)
@@ -115,13 +117,9 @@ def calculate_angles(x, y, z, link_lengths, pole_y=0, pole_z=0):
 
 if __name__ == "__main__":
     # Example usage:
-    # Links matching the default lengths in main.py
-    links = [50, 70, 60]
     target_x = 10
-    target_y = 100
-    target_z = 50
-    
-    out_angles = calculate_angles(target_x, target_y, target_z, links)
-    print(f"Target: ({target_x}, {target_y}, {target_z})")
-    print(f"Lengths: {links}")
-    print(f"Calculated Angles (degrees): {out_angles}")
+    target_y = 10
+    target_z = 10
+
+    print("Run this module from the main robot script so link lengths come from one place.")
+    print("Example usage requires link_lengths to be passed in by the caller.")
