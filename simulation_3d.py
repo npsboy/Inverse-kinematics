@@ -22,6 +22,10 @@ PANEL_BORDER = (60, 68, 88)
 SLIDER_TRACK = (74, 81, 102)
 SLIDER_HANDLE = (15, 153, 113)
 SLIDER_HANDLE_ACTIVE = (32, 191, 142)
+INPUT_BG = (16, 18, 28)
+INPUT_BORDER = (76, 84, 104)
+INPUT_BORDER_ACTIVE = (255, 196, 0)
+INPUT_BORDER_ERROR = (234, 95, 95)
 
 DEFAULT_LINK_LENGTHS = [11.5, 13.5, 16.0]
 DEFAULT_TARGET_RATIO = (0.5, 0.5, 0.22)
@@ -61,6 +65,17 @@ def vec_length(a):
 
 def clamp(value, minimum, maximum):
     return max(minimum, min(maximum, value))
+
+
+def format_component(value):
+    return f"{value:.2f}"
+
+
+def parse_component(text):
+    try:
+        return float(text)
+    except ValueError:
+        return None
 
 
 def rotate_z(point, angle):
@@ -171,6 +186,47 @@ def pick_drag_target(mouse_pos, target, pole, camera, center, fov, settings):
     return min(candidates, key=lambda item: item[0])
 
 
+class InputField:
+    def __init__(self, label, rect, text="", owner=None, component=None):
+        self.label = label
+        self.rect = rect
+        self.text = text
+        self.owner = owner
+        self.component = component
+        self.active = False
+        self.error = False
+
+    def set_rect(self, rect):
+        self.rect = rect
+
+    def handle_text_input(self, text):
+        if not self.active:
+            return
+        self.text += text
+        self.error = False
+
+    def handle_keydown(self, key):
+        if not self.active:
+            return None
+        if key == pygame.K_BACKSPACE:
+            self.text = self.text[:-1]
+        elif key in (pygame.K_RETURN, pygame.K_KP_ENTER):
+            return "submit"
+        return None
+
+    def draw(self, surface):
+        border_color = INPUT_BORDER_ACTIVE if self.active else INPUT_BORDER
+        if self.error:
+            border_color = INPUT_BORDER_ERROR
+        pygame.draw.rect(surface, INPUT_BG, self.rect, border_radius=6)
+        pygame.draw.rect(surface, border_color, self.rect, 2, border_radius=6)
+        label = font.render(self.label, True, TEXT_COLOR)
+        surface.blit(label, (self.rect.x, self.rect.y - 18))
+        display_text = self.text if self.text else "x, y, z"
+        render = font.render(display_text, True, TEXT_COLOR)
+        surface.blit(render, (self.rect.x + 8, self.rect.y + 4))
+
+
 def draw_grid(surface, size, spacing, camera, center, fov):
     half = int(round(size / 2.0))
     spacing = max(2, int(round(spacing)))
@@ -193,9 +249,11 @@ def compute_joint_positions(target, link_lengths):
     ]
 
     positions = [(0.0, 0.0, 0.0)]
+    current_pitch = 0.0
     for length, pitch in zip(link_lengths, pitch_angles):
-        forward = length * math.cos(pitch)
-        up = length * math.sin(pitch)
+        current_pitch += pitch
+        forward = length * math.cos(current_pitch)
+        up = length * math.sin(current_pitch)
         dx = forward * math.sin(yaw)
         dy = forward * math.cos(yaw)
         dz = up
@@ -236,9 +294,11 @@ def compute_joint_positions_with_pole(target, link_lengths, pole, use_pole):
     ]
 
     positions = [(0.0, 0.0, 0.0)]
+    current_pitch = 0.0
     for length, pitch in zip(link_lengths, pitch_angles):
-        forward = length * math.cos(pitch)
-        up = length * math.sin(pitch)
+        current_pitch += pitch
+        forward = length * math.cos(current_pitch)
+        up = length * math.sin(current_pitch)
         dx = forward * math.sin(yaw)
         dy = forward * math.cos(yaw)
         dz = up
@@ -266,8 +326,7 @@ def default_camera_for_lengths(link_lengths):
 
 
 def default_pole_for_lengths(link_lengths):
-    total = sum(link_lengths)
-    return [0.0, total * 0.7, total * 0.45]
+    return [0.0, 10.0, 30.0]
 
 
 def scene_settings(link_lengths):
@@ -299,6 +358,25 @@ def slider_layout(window_size, count):
         tracks.append(pygame.Rect(panel_x + 16, track_y, track_width, track_height))
 
     return pygame.Rect(panel_x, panel_y, panel_width, panel_height), tracks
+
+
+def input_layout(window_size, panel_index, count):
+    width, height = window_size
+    panel_width = min(380, max(280, int(width * 0.34)))
+    panel_height = 86
+    panel_x = width - panel_width - 16
+    panel_y = 16 + panel_index * (panel_height + 12)
+    field_height = 28
+    field_gap = 8
+    field_width = (panel_width - 32 - field_gap * (count - 1)) // count
+
+    fields = []
+    for index in range(count):
+        field_x = panel_x + 16 + index * (field_width + field_gap)
+        field_y = panel_y + 34
+        fields.append(pygame.Rect(field_x, field_y, field_width, field_height))
+
+    return pygame.Rect(panel_x, panel_y, panel_width, panel_height), fields
 
 
 def slider_value_to_x(value, track_rect):
@@ -349,6 +427,7 @@ def draw_overlay(surface, target, pole, angles, link_lengths, use_pole, clock):
         "Mouse drag: orbit camera",
         "Mouse wheel: zoom",
         "I/K: pole Y  J/L: pole X  U/O: pole Z",
+        "Click inputs: type x, y, z",
         "P: toggle pole",
         "Drag sliders to change lengths",
         "R: reset target   C: reset camera",
@@ -393,6 +472,18 @@ def draw_sliders(surface, link_lengths, active_index, window_size):
         handle_radius = 7
         pygame.draw.circle(surface, handle_color, (handle_x, track.centery), handle_radius)
         pygame.draw.circle(surface, TEXT_COLOR, (handle_x, track.centery), handle_radius, 2)
+
+
+def draw_input_panel(surface, panels, window_size):
+    for panel_index, (title_text, panel_fields) in enumerate(panels):
+        panel_rect, field_rects = input_layout(window_size, panel_index, len(panel_fields))
+        pygame.draw.rect(surface, PANEL_BG, panel_rect, border_radius=10)
+        pygame.draw.rect(surface, PANEL_BORDER, panel_rect, 1, border_radius=10)
+        title = font.render(title_text, True, TEXT_COLOR)
+        surface.blit(title, (panel_rect.x + 16, panel_rect.y + 6))
+        for field, rect in zip(panel_fields, field_rects):
+            field.set_rect(rect)
+            field.draw(surface)
 
 
 def draw_axis_labels(surface, settings, camera, center, fov):
@@ -506,6 +597,20 @@ def main():
     camera = default_camera_for_lengths(link_lengths)
     fov = 520.0
 
+    target_fields = [
+        InputField("X", pygame.Rect(0, 0, 0, 0), format_component(target[0]), owner="target", component=0),
+        InputField("Y", pygame.Rect(0, 0, 0, 0), format_component(target[1]), owner="target", component=1),
+        InputField("Z", pygame.Rect(0, 0, 0, 0), format_component(target[2]), owner="target", component=2),
+    ]
+    pole_fields = [
+        InputField("X", pygame.Rect(0, 0, 0, 0), format_component(pole[0]), owner="pole", component=0),
+        InputField("Y", pygame.Rect(0, 0, 0, 0), format_component(pole[1]), owner="pole", component=1),
+        InputField("Z", pygame.Rect(0, 0, 0, 0), format_component(pole[2]), owner="pole", component=2),
+    ]
+    input_panels = [("Target", target_fields), ("Pole", pole_fields)]
+    input_fields = target_fields + pole_fields
+    text_input_active = False
+
     dragging = False
     dragging_slider = None
     dragging_target = False
@@ -517,12 +622,36 @@ def main():
     while running:
         dt = clock.tick(60) / 1000.0
 
+        for panel_index, (_, panel_fields) in enumerate(input_panels):
+            _, field_rects = input_layout(window.get_size(), panel_index, len(panel_fields))
+            for field, rect in zip(panel_fields, field_rects):
+                field.set_rect(rect)
+
         for event in pygame.event.get():
             if event.type == pygame.QUIT:
                 running = False
             elif event.type == pygame.VIDEORESIZE:
                 pygame.display.set_mode(event.size, pygame.RESIZABLE)
             elif event.type == pygame.MOUSEBUTTONDOWN and event.button == 1:
+                hit_field = None
+                for field in input_fields:
+                    if field.rect.collidepoint(event.pos):
+                        hit_field = field
+                        break
+                if hit_field is not None:
+                    for field in input_fields:
+                        field.active = field == hit_field
+                        field.error = False
+                    if not text_input_active:
+                        pygame.key.start_text_input()
+                        text_input_active = True
+                    continue
+                if any(field.active for field in input_fields):
+                    for field in input_fields:
+                        field.active = False
+                    if text_input_active:
+                        pygame.key.stop_text_input()
+                        text_input_active = False
                 panel_rect, tracks = slider_layout(window.get_size(), len(link_lengths))
                 for index, track in enumerate(tracks):
                     hit_rect = pygame.Rect(track.x, track.y - 10, track.width, track.height + 20)
@@ -575,57 +704,90 @@ def main():
             elif event.type == pygame.MOUSEWHEEL:
                 camera["distance"] = max(60.0, camera["distance"] - event.y * 20.0)
             elif event.type == pygame.KEYDOWN:
+                active_field = next((field for field in input_fields if field.active), None)
+                if active_field is not None:
+                    if event.key == pygame.K_ESCAPE:
+                        active_field.active = False
+                        if text_input_active:
+                            pygame.key.stop_text_input()
+                            text_input_active = False
+                        continue
+                    result = active_field.handle_keydown(event.key)
+                    if result == "submit":
+                        parsed = parse_component(active_field.text)
+                        if parsed is None:
+                            active_field.error = True
+                        else:
+                            active_field.error = False
+                            if active_field.owner == "target":
+                                target[active_field.component] = parsed
+                                target = clamp_target_to_reach(target, link_lengths)
+                            else:
+                                pole[active_field.component] = parsed
+                    continue
                 if event.key == pygame.K_r:
                     target = default_target_for_lengths(link_lengths)
                 elif event.key == pygame.K_c:
                     camera = default_camera_for_lengths(link_lengths)
                 elif event.key == pygame.K_p:
                     use_pole = not use_pole
+            elif event.type == pygame.TEXTINPUT:
+                active_field = next((field for field in input_fields if field.active), None)
+                if active_field is not None:
+                    active_field.handle_text_input(event.text)
 
         keys = pygame.key.get_pressed()
-        move_speed = max(12.0, sum(link_lengths) * 1.2)
-        move_speed *= 2.0 if keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT] else 1.0
-        if keys[pygame.K_LEFT]:
-            target[0] -= move_speed * dt
-        if keys[pygame.K_RIGHT]:
-            target[0] += move_speed * dt
-        if keys[pygame.K_UP]:
-            target[1] += move_speed * dt
-        if keys[pygame.K_DOWN]:
-            target[1] -= move_speed * dt
-        if keys[pygame.K_q]:
-            target[2] += move_speed * dt
-        if keys[pygame.K_e]:
-            target[2] -= move_speed * dt
+        if not any(field.active for field in input_fields):
+            move_speed = max(12.0, sum(link_lengths) * 1.2)
+            move_speed *= 2.0 if keys[pygame.K_LSHIFT] or keys[pygame.K_RSHIFT] else 1.0
+            if keys[pygame.K_LEFT]:
+                target[0] -= move_speed * dt
+            if keys[pygame.K_RIGHT]:
+                target[0] += move_speed * dt
+            if keys[pygame.K_UP]:
+                target[1] += move_speed * dt
+            if keys[pygame.K_DOWN]:
+                target[1] -= move_speed * dt
+            if keys[pygame.K_q]:
+                target[2] += move_speed * dt
+            if keys[pygame.K_e]:
+                target[2] -= move_speed * dt
 
-        pole_speed = move_speed
-        if keys[pygame.K_j]:
-            pole[0] -= pole_speed * dt
-        if keys[pygame.K_l]:
-            pole[0] += pole_speed * dt
-        if keys[pygame.K_i]:
-            pole[1] += pole_speed * dt
-        if keys[pygame.K_k]:
-            pole[1] -= pole_speed * dt
-        if keys[pygame.K_u]:
-            pole[2] += pole_speed * dt
-        if keys[pygame.K_o]:
-            pole[2] -= pole_speed * dt
+            pole_speed = move_speed
+            if keys[pygame.K_j]:
+                pole[0] -= pole_speed * dt
+            if keys[pygame.K_l]:
+                pole[0] += pole_speed * dt
+            if keys[pygame.K_i]:
+                pole[1] += pole_speed * dt
+            if keys[pygame.K_k]:
+                pole[1] -= pole_speed * dt
+            if keys[pygame.K_u]:
+                pole[2] += pole_speed * dt
+            if keys[pygame.K_o]:
+                pole[2] -= pole_speed * dt
 
-        moved_x = keys[pygame.K_LEFT] or keys[pygame.K_RIGHT]
-        moved_y = keys[pygame.K_UP] or keys[pygame.K_DOWN]
-        moved_z = keys[pygame.K_q] or keys[pygame.K_e]
-        if moved_x or moved_y or moved_z:
-            active_axes = sum([moved_x, moved_y, moved_z])
-            if active_axes == 1:
-                if moved_x:
-                    target = clamp_target_to_reach(target, link_lengths, axis="x")
-                elif moved_y:
-                    target = clamp_target_to_reach(target, link_lengths, axis="y")
+            moved_x = keys[pygame.K_LEFT] or keys[pygame.K_RIGHT]
+            moved_y = keys[pygame.K_UP] or keys[pygame.K_DOWN]
+            moved_z = keys[pygame.K_q] or keys[pygame.K_e]
+            if moved_x or moved_y or moved_z:
+                active_axes = sum([moved_x, moved_y, moved_z])
+                if active_axes == 1:
+                    if moved_x:
+                        target = clamp_target_to_reach(target, link_lengths, axis="x")
+                    elif moved_y:
+                        target = clamp_target_to_reach(target, link_lengths, axis="y")
+                    else:
+                        target = clamp_target_to_reach(target, link_lengths, axis="z")
                 else:
-                    target = clamp_target_to_reach(target, link_lengths, axis="z")
-            else:
-                target = clamp_target_to_reach(target, link_lengths)
+                    target = clamp_target_to_reach(target, link_lengths)
+
+        for field in target_fields:
+            if not field.active:
+                field.text = format_component(target[field.component])
+        for field in pole_fields:
+            if not field.active:
+                field.text = format_component(pole[field.component])
 
         window.fill(BACKGROUND)
         center = (window.get_width() // 2, window.get_height() // 2)
@@ -693,6 +855,7 @@ def main():
         )
         draw_overlay(window, target, pole, angles, link_lengths, use_pole, clock)
         draw_sliders(window, link_lengths, dragging_slider, window.get_size())
+        draw_input_panel(window, input_panels, window.get_size())
 
         pygame.display.update()
 

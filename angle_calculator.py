@@ -83,6 +83,16 @@ def vector_angle_degrees(vector):
 
     return math.degrees(vector.get_angle()) % 360.0
 
+def to_relative_angles(absolute_angles):
+    if not absolute_angles:
+        return []
+
+    relative = [absolute_angles[0]]
+    for i in range(1, len(absolute_angles)):
+        delta = (absolute_angles[i] - absolute_angles[i - 1] + 180.0) % 360.0 - 180.0
+        relative.append(delta)
+    return relative
+
 def calculate_angles(x, y, z, link_lengths, pole_y=0, pole_z=0):
     """
     Calculate inverse kinematics for an n-link robotic arm.
@@ -93,7 +103,7 @@ def calculate_angles(x, y, z, link_lengths, pole_y=0, pole_z=0):
     :param link_lengths: List specifying the lengths of each link in the chain.
     :param pole_y: Optional Y coordinate for the pole (used to choose joint orientations).
     :param pole_z: Optional Z coordinate for the pole.
-    :return: Dictionary containing the joint angles in degrees.
+    :return: Dictionary containing the joint angles in degrees (relative to the previous link).
     """
     # The extension of the arm in the 3D plane is the hypotenuse of x and y
     extension = math.hypot(x, y)
@@ -102,8 +112,9 @@ def calculate_angles(x, y, z, link_lengths, pole_y=0, pole_z=0):
     
     vectors = resolve_ik(link_lengths, end_effector, pole)
     
-    # Calculate the 3 other joints from the 2D IK computation
-    arm_angles = [vector_angle_degrees(vec) for vec in vectors]
+    # Calculate absolute angles in the 2D plane and convert to relative joint angles
+    absolute_angles = [vector_angle_degrees(vec) for vec in vectors]
+    arm_angles = to_relative_angles(absolute_angles)
     
     # Calculate shoulder pan
     shoulder_pan = math.degrees(math.atan2(x, y)) + 90
