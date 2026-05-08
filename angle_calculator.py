@@ -2,9 +2,10 @@ import math
 import numpy
 from vector import Vector2D
 
-def check_triangle_validity(a, b, c): 
-    return (a + b >= c) or (a + c >= b) or (b + c >= a) or \
-           math.isclose(a + b, c) or math.isclose(a + c, b) or math.isclose(b + c, a)
+def check_triangle_validity(a, b, c):
+    return ((a + b >= c) or math.isclose(a + b, c)) and \
+           ((a + c >= b) or math.isclose(a + c, b)) and \
+           ((b + c >= a) or math.isclose(b + c, a))
 
 def get_intersections(position1, radius1, position2, radius2):
     # Calculate distance

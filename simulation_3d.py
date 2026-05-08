@@ -16,6 +16,9 @@ ARM_COLOR = (245, 245, 245)
 JOINT_COLOR = (74, 82, 104)
 TARGET_COLOR = (255, 196, 0)
 POLE_COLOR = (255, 130, 90)
+ANGLE_BASE_COLOR = (170, 190, 220)
+ANGLE_ARC_COLOR = (255, 210, 120)
+ANGLE_TEXT_COLOR = (255, 230, 160)
 TEXT_COLOR = (220, 225, 235)
 PANEL_BG = (26, 30, 44)
 PANEL_BORDER = (60, 68, 88)
@@ -61,6 +64,17 @@ def vec_scale(a, scale):
 
 def vec_length(a):
     return math.sqrt(a[0] * a[0] + a[1] * a[1] + a[2] * a[2])
+
+
+def vec_dot(a, b):
+    return a[0] * b[0] + a[1] * b[1] + a[2] * b[2]
+
+
+def vec_normalize(a):
+    length = vec_length(a)
+    if length <= 1e-6:
+        return (0.0, 0.0, 0.0)
+    return vec_scale(a, 1.0 / length)
 
 
 def clamp(value, minimum, maximum):
@@ -156,6 +170,16 @@ def draw_point_3d(surface, point, color, camera, center, fov, radius=6):
     position, scale = projected
     scaled_radius = max(2, int(radius * scale * 0.65))
     pygame.draw.circle(surface, color, position, scaled_radius)
+
+
+def draw_text_3d(surface, text, point, color, camera, center, fov, offset=(6, -18)):
+    cam_point = world_to_camera(point, camera["yaw"], camera["pitch"], camera["distance"])
+    projected = project(cam_point, center, fov)
+    if projected is None:
+        return
+    screen_pos, _ = projected
+    render = font.render(text, True, color)
+    surface.blit(render, (screen_pos[0] + offset[0], screen_pos[1] + offset[1]))
 
 
 def screen_to_world(screen_pos, depth, camera, center, fov):
@@ -586,6 +610,165 @@ def draw_pole(surface, pole, camera, center, fov, radius):
     draw_point_3d(surface, (pole[0], pole[1], pole[2]), POLE_COLOR, camera, center, fov, radius)
 
 
+def angle_in_plane(direction, forward, up):
+    forward_component = vec_dot(direction, forward)
+    up_component = vec_dot(direction, up)
+    return math.atan2(up_component, forward_component)
+
+
+def normalize_angle_delta(delta):
+    return (delta + math.pi) % (2.0 * math.pi) - math.pi
+
+
+def draw_arc_3d(surface, center, radius, start_angle, end_angle, forward, up, color, camera, screen_center, fov, width=2):
+    delta = normalize_angle_delta(end_angle - start_angle)
+    if abs(delta) < 1e-4:
+        return
+
+    steps = max(6, int(abs(delta) * 20))
+    last_point = None
+    for index in range(steps + 1):
+        angle = start_angle + delta * (index / steps)
+        offset = vec_add(vec_scale(forward, radius * math.cos(angle)), vec_scale(up, radius * math.sin(angle)))
+        point = vec_add(center, offset)
+        if last_point is not None:
+            draw_line_3d(surface, last_point, point, color, camera, screen_center, fov, width)
+        last_point = point
+
+
+def draw_angle_guides(surface, target, joints, camera, center, fov, settings):
+    x, y, _ = target
+    planar = math.hypot(x, y)
+    if planar > 1e-4:
+        pan_radius = max(8.0, settings["axis_length"] * 0.22)
+        pan_base = (0.0, 1.0, 0.0)
+        pan_up = (1.0, 0.0, 0.0)
+        pan_dir = (x / planar, y / planar, 0.0)
+
+        draw_line_3d(
+            surface,
+            (0.0, 0.0, 0.0),
+            vec_scale(pan_base, pan_radius * 1.15),
+            ANGLE_BASE_COLOR,
+            camera,
+            center,
+            fov,
+            2,
+        )
+        draw_line_3d(
+            surface,
+            (0.0, 0.0, 0.0),
+            vec_scale(pan_dir, pan_radius * 1.15),
+            ANGLE_BASE_COLOR,
+            camera,
+            center,
+            fov,
+            2,
+        )
+
+        draw_arc_3d(
+            surface,
+            (0.0, 0.0, 0.0),
+            pan_radius,
+            0.0,
+            math.atan2(x, y),
+            pan_base,
+            pan_up,
+            ANGLE_ARC_COLOR,
+            camera,
+            center,
+            fov,
+            2,
+        )
+        mid_angle = math.atan2(x, y) * 0.5
+        pan_label_point = vec_add(
+            (0.0, 0.0, 0.0),
+            vec_add(
+                vec_scale(pan_base, pan_radius * 1.3 * math.cos(mid_angle)),
+                vec_scale(pan_up, pan_radius * 1.3 * math.sin(mid_angle)),
+            ),
+        )
+        draw_text_3d(surface, "pan", pan_label_point, ANGLE_TEXT_COLOR, camera, center, fov)
+
+    if len(joints) < 2:
+        return
+
+    yaw = math.atan2(x, y) if planar > 1e-4 else 0.0
+    plane_forward = (math.sin(yaw), math.cos(yaw), 0.0)
+    plane_up = (0.0, 0.0, 1.0)
+
+    link_dirs = []
+    link_lengths = []
+    for index in range(len(joints) - 1):
+        direction = vec_sub(joints[index + 1], joints[index])
+        link_len = vec_length(direction)
+        link_dirs.append(vec_normalize(direction))
+        link_lengths.append(link_len)
+
+    pitch_labels = ["lift", "elbow", "wrist"]
+    for joint_index in range(min(3, len(link_dirs))):
+        joint_pos = joints[joint_index]
+        if joint_index == 0:
+            start_dir = plane_forward
+        else:
+            start_dir = link_dirs[joint_index - 1]
+        end_dir = link_dirs[joint_index]
+
+        if vec_length(start_dir) <= 1e-6 or vec_length(end_dir) <= 1e-6:
+            continue
+
+        start_angle = angle_in_plane(start_dir, plane_forward, plane_up)
+        end_angle = angle_in_plane(end_dir, plane_forward, plane_up)
+        delta = normalize_angle_delta(end_angle - start_angle)
+        if abs(delta) < 1e-4:
+            continue
+
+        base_len = max(8.0, min(link_lengths[joint_index] * 0.45, settings["axis_length"] * 0.22))
+        draw_line_3d(
+            surface,
+            joint_pos,
+            vec_add(joint_pos, vec_scale(start_dir, base_len)),
+            ANGLE_BASE_COLOR,
+            camera,
+            center,
+            fov,
+            2,
+        )
+        draw_line_3d(
+            surface,
+            joint_pos,
+            vec_add(joint_pos, vec_scale(end_dir, base_len)),
+            ANGLE_BASE_COLOR,
+            camera,
+            center,
+            fov,
+            2,
+        )
+
+        draw_arc_3d(
+            surface,
+            joint_pos,
+            base_len * 0.85,
+            start_angle,
+            start_angle + delta,
+            plane_forward,
+            plane_up,
+            ANGLE_ARC_COLOR,
+            camera,
+            center,
+            fov,
+            2,
+        )
+
+        mid_angle = start_angle + delta * 0.5
+        label_offset = vec_add(
+            vec_scale(plane_forward, base_len * 1.1 * math.cos(mid_angle)),
+            vec_scale(plane_up, base_len * 1.1 * math.sin(mid_angle)),
+        )
+        label_point = vec_add(joint_pos, label_offset)
+        draw_text_3d(surface, pitch_labels[joint_index], label_point, ANGLE_TEXT_COLOR, camera, center, fov)
+
+
 def main():
     clock = pygame.time.Clock()
     running = True
@@ -829,6 +1012,7 @@ def main():
         draw_pole(window, pole, camera, center, fov, settings["target_radius"] * 0.85)
 
         joints, angles = compute_joint_positions_with_pole(target, link_lengths, pole, use_pole)
+        draw_angle_guides(window, target, joints, camera, center, fov, settings)
         for index in range(len(joints) - 1):
             draw_line_3d(
                 window,
